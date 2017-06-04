@@ -1,0 +1,138 @@
+#!/bin/sh
+
+# Program 1 - CS 344
+# Jason Goldfine-Middleton
+# Oregon State University, Summer 2016
+
+# This script takes a tab-separated file containing lines of integers and provides either the column-wise or row-wise
+# mean and median for each column or row.
+
+# exit codes
+# note: all errors are 1 due to assignment specifications
+E_SUCCESS=0
+E_NUMARGS=1
+E_BADARGS=1
+E_BADINPUT=1
+E_EMPTYINPUT=1
+
+# input file
+IFILE="ifile$$"
+
+# trap signals, ensuring temporary files are cleaned up
+trap "rm -f sfile$$ ifile$$; exit 1" INT TERM HUP
+
+# 1 for rows, 0 for columns
+declare USE_ROWS
+
+function print_usage() {
+	>&2 echo 'USAGE: stats {-rows|-cols} [input_file]'
+}
+
+# check for correct number of arguments
+if (( $# < 1 || $# > 2 )); then
+	print_usage
+	exit $E_NUMARGS
+fi
+
+# check for correct specification of rows or columns
+# cite: inspired by example given in assignment instructions
+if [[ "$1" == -r* ]]; then
+	USE_ROWS=true
+elif [[ "$1" == -c* ]]; then
+	USE_ROWS=false
+else
+	print_usage
+	exit $E_BADARGS
+fi	
+
+# select input file
+# cite: inspired by example given in assignment instructions
+if (( $# == 1 )); then
+	# wait for input from stdin
+	cat > "$IFILE"
+elif [[ -r "$2" ]]; then
+	IFILE="$2"
+else
+	>&2 echo "stats: cannot read $2"
+	exit $E_BADINPUT
+fi
+
+# ensure input file contains data
+if [[ ! ( -s "$IFILE" ) ]]; then
+	>&2 echo 'stats: input file is empty'
+	exit $E_EMPTYINPUT
+fi
+
+# transpose the data file if user wants row-based calculations
+if [[ "$USE_ROWS" == true ]]; then
+	# scratch file
+	SFILE="sfile$$"
+	
+	NUM_COLS=$(head -n 1 "$IFILE" | wc -w)
+	
+	# convert each column into a row
+	for (( col=1; col<=NUM_COLS; ++col )); do
+		cut -f $col "$IFILE" | tr '\n' '\t' | sed "s/\t$/\n/g"
+	done >> "$SFILE"
+
+	# use scratch file as input
+	IFILE="$SFILE"
+fi
+
+# create two arrays to store the averages
+declare -a means medians
+
+# number of cols determines how many sets of numbers we have
+NUM_COLS=$(head -n 1 "$IFILE" | wc -w)
+# number of rows determines how many numbers are in each set
+NUM_ROWS=$(cat "$IFILE" | wc -l)
+# used to properly position the median using tail and head
+MED_POS=$(( $NUM_ROWS - $NUM_ROWS / 2 ))
+
+for (( col=1; col <= NUM_COLS; ++col )); do
+	# reset total for each column
+	total=0
+	
+	# calculate and store median
+	medians[$col]=$(cut -f $col "$IFILE" | sort -n | tail -n $MED_POS | head -n 1)
+	
+	# store column values in a space-separated list for for..in loop
+	col_vals="$(cut -f $col "$IFILE" | tr '\n' ' ' | sed "s/\ $//g")"
+
+	# sum up the numbers
+	for val in $col_vals; do
+		total=$(( $total + $val ))
+	done
+	
+	# calculate the mean and round up if needed
+	mean=$(( $total / $NUM_ROWS ))
+	remainder=$(( $total % $NUM_ROWS ))
+	if (( $remainder * 2 >= $NUM_ROWS )); then
+		(( ++mean ))
+	fi
+
+	# store mean
+	means[$col]=$mean
+done
+
+# design the print format to match the user's choice of -rows or -cols
+if [[ "$USE_ROWS" == true ]]; then
+	printf "Average\tMedians\n"
+	for (( row=1; row <= NUM_COLS; ++row)); do
+		printf "%i\t%i\n" ${means[$row]} ${medians[$row]}
+	done
+else
+	echo "Averages:"
+	for (( row=1; row <= NUM_COLS; ++row)); do
+		printf "%i\t" ${means[$row]}
+	done
+	echo
+	echo "Medians:"
+	for (( row=1; row <= NUM_COLS; ++row)); do
+		printf "%i\t" ${medians[$row]}
+	done
+	echo
+fi
+
+# clean up
+rm -f "sfile$$" "ifile$$"
